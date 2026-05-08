@@ -2,6 +2,8 @@
 
 Herramienta web para subir el Excel del cuadre diario y descargar los PDFs por día y los totales generales.
 
+**🌐 En vivo:** https://juanfnmb1.github.io/imprime-cuadre/
+
 ## Cómo se usa
 
 1. Abrir la página.
