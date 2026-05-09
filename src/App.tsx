@@ -409,7 +409,7 @@ function SelectionPanel({
             className="bg-secondary text-on-secondary px-md py-xs font-label-sm font-bold disabled:opacity-50 flex items-center gap-xs hover:opacity-90 transition-opacity"
           >
             <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
-            {downloading ? 'Descargando...' : 'Imprimir Resumen'}
+            {downloading ? 'Descargando...' : 'Descargar Resumen'}
           </button>
         </div>
       </div>
