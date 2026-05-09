@@ -415,6 +415,12 @@ function SelectionPanel({
       </div>
 
       <ul className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-sm">
+        <li className="bg-secondary text-on-secondary px-sm py-xs flex flex-col gap-xs col-span-2 sm:col-span-4 lg:col-span-1">
+          <span className="text-label-sm uppercase tracking-wider font-bold">Total</span>
+          <span className="text-data-mono font-data-mono text-[16px] font-bold">
+            {formatMoney(grand)}
+          </span>
+        </li>
         {methods.map((m) => (
           <li
             key={m.method}
@@ -428,12 +434,6 @@ function SelectionPanel({
             </span>
           </li>
         ))}
-        <li className="bg-secondary text-on-secondary px-sm py-xs flex flex-col gap-xs col-span-2 sm:col-span-4 lg:col-span-1">
-          <span className="text-label-sm uppercase tracking-wider font-bold">Total</span>
-          <span className="text-data-mono font-data-mono text-[16px] font-bold">
-            {formatMoney(grand)}
-          </span>
-        </li>
       </ul>
     </section>
   );

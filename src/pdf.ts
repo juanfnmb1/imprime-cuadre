@@ -230,7 +230,7 @@ export async function downloadAllPdfs(
   const folder = zip.folder(folderName);
   if (!folder) throw new Error('No se pudo crear la carpeta dentro del zip.');
 
-  folder.file('Totales Generales.pdf', buildGrandTotalPdf(grandTotals, period).output('blob'));
+  folder.file(summaryFilename(sorted), buildGrandTotalPdf(grandTotals, period).output('blob'));
   for (const day of sorted) {
     const txs = transactionsByDay[day.dateKey] ?? [];
     folder.file(dayFilename(day), buildDayPdf(day, txs).output('blob'));
