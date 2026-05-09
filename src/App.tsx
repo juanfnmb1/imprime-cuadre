@@ -177,6 +177,12 @@ function Preview({ data }: { data: ParsedWorkbook }) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [selectionDownloading, setSelectionDownloading] = useState(false);
+  const [sortAscending, setSortAscending] = useState(true);
+
+  const sortedDays = useMemo(() => {
+    const asc = [...days].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+    return sortAscending ? asc : asc.reverse();
+  }, [days, sortAscending]);
 
   const totalTx = useMemo(
     () => Object.values(transactionsByDay).reduce((acc, list) => acc + list.length, 0),
@@ -297,6 +303,16 @@ function Preview({ data }: { data: ParsedWorkbook }) {
             <span className="text-label-sm text-on-surface-variant">
               {days.length} {days.length === 1 ? 'día' : 'días'} · {totalTx} transacciones
             </span>
+            <button
+              onClick={() => setSortAscending((v) => !v)}
+              className="border border-outline-variant text-on-surface px-md py-xs font-label-sm font-bold hover:bg-surface-container-high transition-colors flex items-center gap-xs"
+              title="Cambiar orden"
+            >
+              <span className="material-symbols-outlined text-[18px]">
+                {sortAscending ? 'arrow_upward' : 'arrow_downward'}
+              </span>
+              {sortAscending ? 'Más antiguos' : 'Más recientes'}
+            </button>
             {!selectionMode && (
               <button
                 onClick={startSelection}
@@ -322,7 +338,7 @@ function Preview({ data }: { data: ParsedWorkbook }) {
         )}
 
         <div className="file-grid">
-          {days.map((day) => (
+          {sortedDays.map((day) => (
             <DayCard
               key={day.dateKey + day.rawDate}
               day={day}

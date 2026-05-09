@@ -177,6 +177,15 @@ export function buildCustomSummaryPdf(selectedDays: DayTotals[]): jsPDF {
   return doc;
 }
 
+function summaryFilename(sortedDays: DayTotals[]): string {
+  if (sortedDays.length === 0) return 'Resumen Cuadre.pdf';
+  const first = shortMonthDay(sortedDays[0].rawDate);
+  const last = shortMonthDay(sortedDays[sortedDays.length - 1].rawDate);
+  return first === last
+    ? `Resumen Cuadre ${first}.pdf`
+    : `Resumen Cuadre ${first} a ${last}.pdf`;
+}
+
 // Bundles the user-selected days into a zip with a custom summary PDF + each
 // selected day's full PDF. Folder name uses the same range pattern.
 export async function downloadSelectionZip(
@@ -190,7 +199,7 @@ export async function downloadSelectionZip(
   const folder = zip.folder(folderName);
   if (!folder) throw new Error('No se pudo crear la carpeta dentro del zip.');
 
-  folder.file('Resumen.pdf', buildCustomSummaryPdf(sorted).output('blob'));
+  folder.file(summaryFilename(sorted), buildCustomSummaryPdf(sorted).output('blob'));
   for (const day of sorted) {
     const txs = transactionsByDay[day.dateKey] ?? [];
     folder.file(dayFilename(day), buildDayPdf(day, txs).output('blob'));
