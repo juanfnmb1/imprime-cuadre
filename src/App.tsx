@@ -203,6 +203,14 @@ function Preview({ data }: { data: ParsedWorkbook }) {
     });
   }
 
+  const allSelected = days.length > 0 && selectedKeys.size === days.length;
+
+  function toggleAll() {
+    setSelectedKeys((prev) =>
+      prev.size === days.length ? new Set() : new Set(days.map((d) => d.dateKey)),
+    );
+  }
+
   function startSelection() {
     setSelectionMode(true);
     setSelectedKeys(new Set());
@@ -304,7 +312,10 @@ function Preview({ data }: { data: ParsedWorkbook }) {
         {selectionMode && (
           <SelectionPanel
             selectedDays={selectedDays}
+            totalDays={days.length}
+            allSelected={allSelected}
             downloading={selectionDownloading}
+            onToggleAll={toggleAll}
             onPrint={printSelection}
             onCancel={exitSelection}
           />
@@ -329,12 +340,18 @@ function Preview({ data }: { data: ParsedWorkbook }) {
 
 function SelectionPanel({
   selectedDays,
+  totalDays,
+  allSelected,
   downloading,
+  onToggleAll,
   onPrint,
   onCancel,
 }: {
   selectedDays: DayTotals[];
+  totalDays: number;
+  allSelected: boolean;
   downloading: boolean;
+  onToggleAll: () => void;
   onPrint: () => void;
   onCancel: () => void;
 }) {
@@ -345,13 +362,22 @@ function SelectionPanel({
       <div className="flex items-start justify-between flex-wrap gap-sm border-b border-outline-variant pb-base">
         <div>
           <h3 className="text-h2 font-h2 text-on-surface">Modificar Cuadre</h3>
-          <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mt-xs">
-            {selectedDays.length === 0
-              ? 'Selecciona los días que quieres incluir'
-              : `${selectedDays.length} ${
-                  selectedDays.length === 1 ? 'día seleccionado' : 'días seleccionados'
-                }`}
-          </p>
+          <div className="flex items-center gap-sm mt-xs flex-wrap">
+            <p className="text-label-sm text-on-surface-variant uppercase tracking-wider">
+              {selectedDays.length === 0
+                ? 'Selecciona los días que quieres incluir'
+                : `${selectedDays.length} de ${totalDays} ${
+                    totalDays === 1 ? 'día seleccionado' : 'días seleccionados'
+                  }`}
+            </p>
+            <button
+              onClick={onToggleAll}
+              disabled={downloading || totalDays === 0}
+              className="text-label-sm text-secondary hover:underline font-bold uppercase tracking-wider disabled:opacity-50"
+            >
+              {allSelected ? 'Quitar Todos' : 'Seleccionar Todos'}
+            </button>
+          </div>
         </div>
         <div className="flex gap-sm">
           <button
