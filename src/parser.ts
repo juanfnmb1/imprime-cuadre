@@ -192,3 +192,26 @@ export function formatMoney(n: number): string {
     maximumFractionDigits: 2,
   })}`;
 }
+
+// Aggregates the per-day totals across the given days into per-method amounts
+// and an overall grand total. Source values come straight from the Excel
+// (each day.totals[i].amount and day.totalDiario), so this just re-totals
+// numbers the spreadsheet itself produced.
+export function sumDaysTotals(days: DayTotals[]): {
+  methods: { method: PaymentMethod; amount: number }[];
+  grand: number;
+} {
+  const byMethod: Record<string, number> = {};
+  let grand = 0;
+  for (const day of days) {
+    for (const t of day.totals) {
+      byMethod[t.method] = (byMethod[t.method] ?? 0) + t.amount;
+    }
+    grand += day.totalDiario;
+  }
+  const methods = METHOD_COLUMNS.map((method) => ({
+    method,
+    amount: byMethod[method] ?? 0,
+  }));
+  return { methods, grand };
+}

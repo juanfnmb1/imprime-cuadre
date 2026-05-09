@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import JSZip from 'jszip';
-import { formatMoney } from './parser';
+import { formatMoney, sumDaysTotals } from './parser';
 import type { DayTotals, GrandTotalRow, Transaction } from './types';
 
 // Black & white only — no fills, just thin black borders. Saves ink.
@@ -124,11 +124,86 @@ export function rangeFolderName(days: DayTotals[]): string {
   const sorted = [...days].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
   const first = shortMonthDay(sorted[0].rawDate);
   const last = shortMonthDay(sorted[sorted.length - 1].rawDate);
-  return first === last ? `cuadre-${first}` : `cuadre-${first}-to-${last}`;
+  return first === last ? `cuadre-${first}` : `cuadre-${first}-a-${last}`;
+}
+
+export function buildCustomSummaryPdf(selectedDays: DayTotals[]): jsPDF {
+  const sorted = [...selectedDays].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  const { methods, grand } = sumDaysTotals(sorted);
+
+  const subtitle =
+    sorted.length === 0
+      ? 'Sin días seleccionados'
+      : sorted.length === 1
+        ? `Día: ${sorted[0].rawDate}`
+        : `Periodo: ${sorted[0].rawDate} a ${sorted[sorted.length - 1].rawDate} · ${sorted.length} días`;
+
+  const doc = newDoc();
+  header(doc, 'Resumen del Cuadre', subtitle);
+
+  autoTable(doc, {
+    ...BW_TABLE_DEFAULTS,
+    startY: 90,
+    head: [['Método', 'Monto']],
+    body: methods.map((m) => [m.method, formatMoney(m.amount)]),
+    foot: [['Total General', formatMoney(grand)]],
+    footStyles: {
+      fillColor: false,
+      textColor: 0,
+      fontStyle: 'bold',
+      lineColor: 0,
+      lineWidth: 0.5,
+    },
+    columnStyles: { 1: { halign: 'right' } },
+    margin: { left: 40, right: 40 },
+    tableWidth: 280,
+    styles: { ...BW_TABLE_DEFAULTS.styles, fontSize: 11, cellPadding: 6 },
+  });
+
+  if (sorted.length > 0) {
+    const afterY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+
+    autoTable(doc, {
+      ...BW_TABLE_DEFAULTS,
+      startY: afterY + 24,
+      head: [['Día', 'Total Diario']],
+      body: sorted.map((d) => [d.rawDate, formatMoney(d.totalDiario)]),
+      columnStyles: { 1: { halign: 'right' } },
+      margin: { left: 40, right: 40 },
+      styles: { ...BW_TABLE_DEFAULTS.styles, fontSize: 10, cellPadding: 5 },
+    });
+  }
+
+  return doc;
+}
+
+// Bundles the user-selected days into a zip with a custom summary PDF + each
+// selected day's full PDF. Folder name uses the same range pattern.
+export async function downloadSelectionZip(
+  selectedDays: DayTotals[],
+  transactionsByDay: Record<string, Transaction[]>,
+): Promise<{ folderName: string; count: number }> {
+  const sorted = [...selectedDays].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  const folderName = rangeFolderName(sorted);
+
+  const zip = new JSZip();
+  const folder = zip.folder(folderName);
+  if (!folder) throw new Error('No se pudo crear la carpeta dentro del zip.');
+
+  folder.file('Resumen.pdf', buildCustomSummaryPdf(sorted).output('blob'));
+  for (const day of sorted) {
+    const txs = transactionsByDay[day.dateKey] ?? [];
+    folder.file(dayFilename(day), buildDayPdf(day, txs).output('blob'));
+  }
+
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  downloadBlob(zipBlob, `${folderName}.zip`);
+
+  return { folderName, count: sorted.length + 1 };
 }
 
 // Bundles every PDF into a single zip and downloads it to the user's Downloads
-// folder. The zip contains a folder so extracting yields cuadre-{first}-to-{last}/
+// folder. The zip contains a folder so extracting yields cuadre-{first}-a-{last}/
 // with all PDFs inside.
 export async function downloadAllPdfs(
   days: DayTotals[],

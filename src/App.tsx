@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState } from 'react';
-import { formatMoney, parseWorkbook } from './parser';
+import { formatMoney, parseWorkbook, sumDaysTotals } from './parser';
 import {
   buildDayPdf,
   buildGrandTotalPdf,
   dayFilename,
   downloadAllPdfs,
+  downloadSelectionZip,
 } from './pdf';
 import type { DayTotals, ParsedWorkbook, Transaction, TransactionIssue } from './types';
 
@@ -173,6 +174,10 @@ function Preview({ data }: { data: ParsedWorkbook }) {
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState<string>('');
 
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [selectionDownloading, setSelectionDownloading] = useState(false);
+
   const totalTx = useMemo(
     () => Object.values(transactionsByDay).reduce((acc, list) => acc + list.length, 0),
     [transactionsByDay],
@@ -183,6 +188,47 @@ function Preview({ data }: { data: ParsedWorkbook }) {
     const sorted = [...days].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
     return { first: sorted[0].rawDate, last: sorted[sorted.length - 1].rawDate };
   }, [days]);
+
+  const selectedDays = useMemo(
+    () => days.filter((d) => selectedKeys.has(d.dateKey)),
+    [days, selectedKeys],
+  );
+
+  function toggleDay(dateKey: string) {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(dateKey)) next.delete(dateKey);
+      else next.add(dateKey);
+      return next;
+    });
+  }
+
+  function startSelection() {
+    setSelectionMode(true);
+    setSelectedKeys(new Set());
+    setDownloadStatus('');
+  }
+
+  function exitSelection() {
+    setSelectionMode(false);
+    setSelectedKeys(new Set());
+  }
+
+  async function printSelection() {
+    if (selectedDays.length === 0) return;
+    setSelectionDownloading(true);
+    try {
+      const result = await downloadSelectionZip(selectedDays, transactionsByDay);
+      setDownloadStatus(
+        `Descargado: ${result.folderName}.zip (${result.count} PDFs adentro, incluyendo el resumen).`,
+      );
+      exitSelection();
+    } catch (e) {
+      setDownloadStatus(e instanceof Error ? `Error: ${e.message}` : 'Error al generar el zip.');
+    } finally {
+      setSelectionDownloading(false);
+    }
+  }
 
   async function downloadAll() {
     setDownloadingAll(true);
@@ -239,10 +285,30 @@ function Preview({ data }: { data: ParsedWorkbook }) {
       <section className="space-y-md">
         <div className="flex justify-between items-center border-b border-outline-variant pb-base flex-wrap gap-sm">
           <h2 className="text-h2 font-h2 text-on-surface">Por Día</h2>
-          <span className="text-label-sm text-on-surface-variant">
-            {days.length} {days.length === 1 ? 'día' : 'días'} · {totalTx} transacciones
-          </span>
+          <div className="flex items-center gap-sm flex-wrap">
+            <span className="text-label-sm text-on-surface-variant">
+              {days.length} {days.length === 1 ? 'día' : 'días'} · {totalTx} transacciones
+            </span>
+            {!selectionMode && (
+              <button
+                onClick={startSelection}
+                className="border border-secondary text-secondary px-md py-xs font-label-sm font-bold hover:bg-secondary/10 transition-colors flex items-center gap-xs"
+              >
+                <span className="material-symbols-outlined text-[18px]">tune</span>
+                Modificar Cuadre
+              </button>
+            )}
+          </div>
         </div>
+
+        {selectionMode && (
+          <SelectionPanel
+            selectedDays={selectedDays}
+            downloading={selectionDownloading}
+            onPrint={printSelection}
+            onCancel={exitSelection}
+          />
+        )}
 
         <div className="file-grid">
           {days.map((day) => (
@@ -250,11 +316,84 @@ function Preview({ data }: { data: ParsedWorkbook }) {
               key={day.dateKey + day.rawDate}
               day={day}
               transactions={transactionsByDay[day.dateKey] ?? []}
+              selectionMode={selectionMode}
+              selected={selectedKeys.has(day.dateKey)}
+              onToggleSelect={() => toggleDay(day.dateKey)}
             />
           ))}
         </div>
       </section>
     </>
+  );
+}
+
+function SelectionPanel({
+  selectedDays,
+  downloading,
+  onPrint,
+  onCancel,
+}: {
+  selectedDays: DayTotals[];
+  downloading: boolean;
+  onPrint: () => void;
+  onCancel: () => void;
+}) {
+  const { methods, grand } = useMemo(() => sumDaysTotals(selectedDays), [selectedDays]);
+
+  return (
+    <section className="bg-surface-container border-2 border-secondary p-md space-y-md sticky top-2 z-10 shadow-lg">
+      <div className="flex items-start justify-between flex-wrap gap-sm border-b border-outline-variant pb-base">
+        <div>
+          <h3 className="text-h2 font-h2 text-on-surface">Modificar Cuadre</h3>
+          <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mt-xs">
+            {selectedDays.length === 0
+              ? 'Selecciona los días que quieres incluir'
+              : `${selectedDays.length} ${
+                  selectedDays.length === 1 ? 'día seleccionado' : 'días seleccionados'
+                }`}
+          </p>
+        </div>
+        <div className="flex gap-sm">
+          <button
+            onClick={onCancel}
+            disabled={downloading}
+            className="border border-outline-variant text-on-surface px-md py-xs font-label-sm font-bold hover:bg-surface-container-high transition-colors disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onPrint}
+            disabled={selectedDays.length === 0 || downloading}
+            className="bg-secondary text-on-secondary px-md py-xs font-label-sm font-bold disabled:opacity-50 flex items-center gap-xs hover:opacity-90 transition-opacity"
+          >
+            <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
+            {downloading ? 'Descargando...' : 'Imprimir Resumen'}
+          </button>
+        </div>
+      </div>
+
+      <ul className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-sm">
+        {methods.map((m) => (
+          <li
+            key={m.method}
+            className="bg-surface-container-lowest border border-outline-variant px-sm py-xs flex flex-col gap-xs"
+          >
+            <span className="text-label-sm text-on-surface-variant uppercase tracking-wider">
+              {m.method}
+            </span>
+            <span className="text-data-mono font-data-mono text-on-surface text-[16px]">
+              {formatMoney(m.amount)}
+            </span>
+          </li>
+        ))}
+        <li className="bg-secondary text-on-secondary px-sm py-xs flex flex-col gap-xs col-span-2 sm:col-span-4 lg:col-span-1">
+          <span className="text-label-sm uppercase tracking-wider font-bold">Total</span>
+          <span className="text-data-mono font-data-mono text-[16px] font-bold">
+            {formatMoney(grand)}
+          </span>
+        </li>
+      </ul>
+    </section>
   );
 }
 
@@ -335,7 +474,19 @@ function GrandTotalCard({
   );
 }
 
-function DayCard({ day, transactions }: { day: DayTotals; transactions: Transaction[] }) {
+function DayCard({
+  day,
+  transactions,
+  selectionMode = false,
+  selected = false,
+  onToggleSelect,
+}: {
+  day: DayTotals;
+  transactions: Transaction[];
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+}) {
   const [open, setOpen] = useState(false);
 
   function downloadDay() {
@@ -343,19 +494,47 @@ function DayCard({ day, transactions }: { day: DayTotals; transactions: Transact
     doc.save(dayFilename(day));
   }
 
+  const selectionClasses = selectionMode
+    ? `cursor-pointer ${
+        selected
+          ? 'border-secondary border-2 bg-secondary/5'
+          : 'border-outline-variant hover:border-on-surface-variant'
+      }`
+    : 'border border-outline-variant hover:bg-surface-container-high';
+
   return (
-    <article className="bg-surface-container border border-outline-variant p-md hover:bg-surface-container-high transition-colors group relative flex flex-col">
+    <article
+      className={`bg-surface-container p-md transition-colors group relative flex flex-col ${selectionClasses}`}
+      onClick={selectionMode ? onToggleSelect : undefined}
+      role={selectionMode ? 'button' : undefined}
+      aria-pressed={selectionMode ? selected : undefined}
+    >
       <div className="flex items-start justify-between mb-md">
         <div className="p-sm bg-surface-container-lowest border border-outline-variant rounded">
           <span className="material-symbols-outlined text-on-surface">description</span>
         </div>
-        <button
-          onClick={downloadDay}
-          aria-label="Descargar PDF del día"
-          className="text-secondary hover:opacity-80 transition-opacity p-xs"
-        >
-          <span className="material-symbols-outlined text-[28px]">download</span>
-        </button>
+        {selectionMode ? (
+          <div
+            className={`w-7 h-7 border-2 flex items-center justify-center transition-colors ${
+              selected ? 'bg-secondary border-secondary' : 'border-outline-variant bg-surface-container-lowest'
+            }`}
+            aria-hidden
+          >
+            {selected && (
+              <span className="material-symbols-outlined text-on-secondary text-[20px]">
+                check
+              </span>
+            )}
+          </div>
+        ) : (
+          <button
+            onClick={downloadDay}
+            aria-label="Descargar PDF del día"
+            className="text-secondary hover:opacity-80 transition-opacity p-xs"
+          >
+            <span className="material-symbols-outlined text-[28px]">download</span>
+          </button>
+        )}
       </div>
 
       <div>
@@ -383,48 +562,52 @@ function DayCard({ day, transactions }: { day: DayTotals; transactions: Transact
         ))}
       </div>
 
-      <div className="mt-md pt-sm border-t border-outline-variant flex justify-between items-center">
-        <span className="text-label-sm font-bold text-emerald-500 uppercase">Listo</span>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="text-label-sm text-secondary hover:underline flex items-center gap-xs font-bold"
-        >
-          {open ? 'Ocultar' : `Ver ${transactions.length}`}
-          <span className="material-symbols-outlined text-[14px]">
-            {open ? 'expand_less' : 'expand_more'}
-          </span>
-        </button>
-      </div>
+      {!selectionMode && (
+        <>
+          <div className="mt-md pt-sm border-t border-outline-variant flex justify-between items-center">
+            <span className="text-label-sm font-bold text-emerald-500 uppercase">Listo</span>
+            <button
+              onClick={() => setOpen((v) => !v)}
+              className="text-label-sm text-secondary hover:underline flex items-center gap-xs font-bold"
+            >
+              {open ? 'Ocultar' : `Ver ${transactions.length}`}
+              <span className="material-symbols-outlined text-[14px]">
+                {open ? 'expand_less' : 'expand_more'}
+              </span>
+            </button>
+          </div>
 
-      {open && (
-        <div className="mt-sm border-t border-outline-variant pt-sm">
-          {transactions.length === 0 ? (
-            <p className="text-label-sm text-on-surface-variant text-center py-md">
-              Sin transacciones para este día.
-            </p>
-          ) : (
-            <table className="w-full text-data-mono font-data-mono">
-              <thead>
-                <tr className="text-left text-label-sm text-on-surface-variant uppercase tracking-wider">
-                  <th className="py-xs pr-xs font-bold">Servicio</th>
-                  <th className="py-xs px-xs font-bold">Método</th>
-                  <th className="py-xs pl-xs font-bold text-right">Monto</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transactions.map((t, i) => (
-                  <tr key={i} className="border-t border-outline-variant">
-                    <td className="py-xs pr-xs text-on-surface align-top">{t.servicio}</td>
-                    <td className="py-xs px-xs text-on-surface-variant align-top">{t.metodo}</td>
-                    <td className="py-xs pl-xs text-right text-on-surface align-top">
-                      {formatMoney(t.total)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {open && (
+            <div className="mt-sm border-t border-outline-variant pt-sm">
+              {transactions.length === 0 ? (
+                <p className="text-label-sm text-on-surface-variant text-center py-md">
+                  Sin transacciones para este día.
+                </p>
+              ) : (
+                <table className="w-full text-data-mono font-data-mono">
+                  <thead>
+                    <tr className="text-left text-label-sm text-on-surface-variant uppercase tracking-wider">
+                      <th className="py-xs pr-xs font-bold">Servicio</th>
+                      <th className="py-xs px-xs font-bold">Método</th>
+                      <th className="py-xs pl-xs font-bold text-right">Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transactions.map((t, i) => (
+                      <tr key={i} className="border-t border-outline-variant">
+                        <td className="py-xs pr-xs text-on-surface align-top">{t.servicio}</td>
+                        <td className="py-xs px-xs text-on-surface-variant align-top">{t.metodo}</td>
+                        <td className="py-xs pl-xs text-right text-on-surface align-top">
+                          {formatMoney(t.total)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
     </article>
   );
