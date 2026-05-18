@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import type {
   DayTotals,
+  Deducible,
   GrandTotalRow,
   ParsedWorkbook,
   PaymentMethod,
@@ -11,7 +12,16 @@ import type {
 const TOTALES_SHEET = 'Totales';
 const TRANSACCIONES_SHEET = 'Transacciones Organizadas';
 
-const METHOD_COLUMNS: PaymentMethod[] = ['Zelle', 'Cash', 'Clover', 'Venmo', 'Paypal', 'Cash App'];
+export const PAYMENT_METHODS: PaymentMethod[] = [
+  'Zelle',
+  'Cash',
+  'Clover',
+  'Venmo',
+  'Paypal',
+  'Cash App',
+];
+
+const METHOD_COLUMNS = PAYMENT_METHODS;
 
 export function parseWorkbook(buf: ArrayBuffer): ParsedWorkbook {
   const wb = XLSX.read(buf, { cellDates: true });
@@ -214,4 +224,28 @@ export function sumDaysTotals(days: DayTotals[]): {
     amount: byMethod[method] ?? 0,
   }));
   return { methods, grand };
+}
+
+// Subtracts each deducible from its matching method's amount and from the
+// grand total. Amounts can go negative if a deducible exceeds the method
+// total — that's intentional, the user trusts their own input.
+export function applyDeducibles(
+  methods: { method: PaymentMethod; amount: number }[],
+  grand: number,
+  deducibles: Deducible[],
+): { methods: { method: PaymentMethod; amount: number }[]; grand: number } {
+  const byMethod: Record<string, number> = {};
+  let totalDeduc = 0;
+  for (const d of deducibles) {
+    const amt = Number.isFinite(d.amount) ? d.amount : 0;
+    byMethod[d.method] = (byMethod[d.method] ?? 0) + amt;
+    totalDeduc += amt;
+  }
+  return {
+    methods: methods.map((m) => ({
+      method: m.method,
+      amount: m.amount - (byMethod[m.method] ?? 0),
+    })),
+    grand: grand - totalDeduc,
+  };
 }

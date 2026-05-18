@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { formatMoney, parseWorkbook, sumDaysTotals } from './parser';
+import { applyDeducibles, formatMoney, parseWorkbook, PAYMENT_METHODS, sumDaysTotals } from './parser';
 import {
   buildDayPdf,
   buildGrandTotalPdf,
@@ -7,7 +7,21 @@ import {
   downloadAllPdfs,
   downloadSelectionZip,
 } from './pdf';
-import type { DayTotals, ParsedWorkbook, Transaction, TransactionIssue } from './types';
+import type {
+  DayTotals,
+  Deducible,
+  ParsedWorkbook,
+  PaymentMethod,
+  Transaction,
+  TransactionIssue,
+} from './types';
+
+function makeDeducibleId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 export function App() {
   const [data, setData] = useState<ParsedWorkbook | null>(null);
@@ -178,6 +192,7 @@ function Preview({ data }: { data: ParsedWorkbook }) {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [selectionDownloading, setSelectionDownloading] = useState(false);
   const [sortAscending, setSortAscending] = useState(true);
+  const [deducibles, setDeducibles] = useState<Deducible[]>([]);
 
   const sortedDays = useMemo(() => {
     const asc = [...days].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
@@ -220,19 +235,33 @@ function Preview({ data }: { data: ParsedWorkbook }) {
   function startSelection() {
     setSelectionMode(true);
     setSelectedKeys(new Set());
+    setDeducibles([]);
     setDownloadStatus('');
   }
 
   function exitSelection() {
     setSelectionMode(false);
     setSelectedKeys(new Set());
+    setDeducibles([]);
+  }
+
+  function addDeducible(d: Omit<Deducible, 'id'>) {
+    setDeducibles((prev) => [...prev, { id: makeDeducibleId(), ...d }]);
+  }
+
+  function updateDeducible(id: string, patch: Partial<Omit<Deducible, 'id'>>) {
+    setDeducibles((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
+  }
+
+  function removeDeducible(id: string) {
+    setDeducibles((prev) => prev.filter((d) => d.id !== id));
   }
 
   async function printSelection() {
     if (selectedDays.length === 0) return;
     setSelectionDownloading(true);
     try {
-      const result = await downloadSelectionZip(selectedDays, transactionsByDay);
+      const result = await downloadSelectionZip(selectedDays, transactionsByDay, deducibles);
       setDownloadStatus(
         `Descargado: ${result.folderName}.zip (${result.count} PDFs adentro, incluyendo el resumen).`,
       );
@@ -331,6 +360,10 @@ function Preview({ data }: { data: ParsedWorkbook }) {
             totalDays={days.length}
             allSelected={allSelected}
             downloading={selectionDownloading}
+            deducibles={deducibles}
+            onAddDeducible={addDeducible}
+            onUpdateDeducible={updateDeducible}
+            onRemoveDeducible={removeDeducible}
             onToggleAll={toggleAll}
             onPrint={printSelection}
             onCancel={exitSelection}
@@ -359,6 +392,10 @@ function SelectionPanel({
   totalDays,
   allSelected,
   downloading,
+  deducibles,
+  onAddDeducible,
+  onUpdateDeducible,
+  onRemoveDeducible,
   onToggleAll,
   onPrint,
   onCancel,
@@ -367,11 +404,21 @@ function SelectionPanel({
   totalDays: number;
   allSelected: boolean;
   downloading: boolean;
+  deducibles: Deducible[];
+  onAddDeducible: (d: Omit<Deducible, 'id'>) => void;
+  onUpdateDeducible: (id: string, patch: Partial<Omit<Deducible, 'id'>>) => void;
+  onRemoveDeducible: (id: string) => void;
   onToggleAll: () => void;
   onPrint: () => void;
   onCancel: () => void;
 }) {
   const { methods, grand } = useMemo(() => sumDaysTotals(selectedDays), [selectedDays]);
+  const after = useMemo(
+    () => applyDeducibles(methods, grand, deducibles),
+    [methods, grand, deducibles],
+  );
+  const hasDeducibles = deducibles.length > 0;
+  const [showAddForm, setShowAddForm] = useState(false);
 
   return (
     <section className="bg-surface-container border-2 border-secondary p-md space-y-md sticky top-2 z-10 shadow-lg">
@@ -395,13 +442,21 @@ function SelectionPanel({
             </button>
           </div>
         </div>
-        <div className="flex gap-sm">
+        <div className="flex gap-sm flex-wrap">
           <button
             onClick={onCancel}
             disabled={downloading}
             className="border border-outline-variant text-on-surface px-md py-xs font-label-sm font-bold hover:bg-surface-container-high transition-colors disabled:opacity-50"
           >
             Cancelar
+          </button>
+          <button
+            onClick={() => setShowAddForm(true)}
+            disabled={downloading || showAddForm}
+            className="border border-secondary text-secondary px-md py-xs font-label-sm font-bold hover:bg-secondary/10 transition-colors flex items-center gap-xs disabled:opacity-50"
+          >
+            <span className="material-symbols-outlined text-[18px]">add</span>
+            Deducible
           </button>
           <button
             onClick={onPrint}
@@ -414,28 +469,241 @@ function SelectionPanel({
         </div>
       </div>
 
-      <ul className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-sm">
-        <li className="bg-secondary text-on-secondary px-sm py-xs flex flex-col gap-xs col-span-2 sm:col-span-4 lg:col-span-1">
-          <span className="text-label-sm uppercase tracking-wider font-bold">Total</span>
-          <span className="text-data-mono font-data-mono text-[16px] font-bold">
-            {formatMoney(grand)}
+      <TotalsGrid methods={methods} grand={grand} />
+
+      {showAddForm && (
+        <AddDeducibleForm
+          disabled={downloading}
+          onAdd={(d) => onAddDeducible(d)}
+          onClose={() => setShowAddForm(false)}
+        />
+      )}
+
+      {hasDeducibles && (
+        <div className="space-y-sm border-t border-outline-variant pt-md">
+          <h4 className="text-label-sm text-on-surface-variant uppercase tracking-widest font-bold">
+            Deducibles
+          </h4>
+          <ul className="space-y-xs">
+            {deducibles.map((d) => (
+              <DeducibleRow
+                key={d.id}
+                deducible={d}
+                disabled={downloading}
+                onUpdate={(patch) => onUpdateDeducible(d.id, patch)}
+                onRemove={() => onRemoveDeducible(d.id)}
+              />
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {hasDeducibles && (
+        <div className="space-y-sm border-t border-outline-variant pt-md">
+          <h4 className="text-label-sm text-on-surface-variant uppercase tracking-widest font-bold">
+            Total Después de Deducibles
+          </h4>
+          <TotalsGrid methods={after.methods} grand={after.grand} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AddDeducibleForm({
+  disabled,
+  onAdd,
+  onClose,
+}: {
+  disabled: boolean;
+  onAdd: (d: Omit<Deducible, 'id'>) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [method, setMethod] = useState<PaymentMethod>('Cash');
+  const [amount, setAmount] = useState('');
+
+  const parsed = parseFloat(amount);
+  const canAdd = !disabled && name.trim().length > 0;
+
+  function submit() {
+    if (!canAdd) return;
+    onAdd({
+      name: name.trim(),
+      method,
+      amount: Number.isFinite(parsed) ? parsed : 0,
+    });
+    setName('');
+    setAmount('');
+    onClose();
+  }
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submit();
+    }
+  }
+
+  return (
+    <div className="border border-secondary bg-surface-container-lowest p-sm space-y-sm">
+      <div className="flex items-center justify-between">
+        <h4 className="text-label-sm text-secondary uppercase tracking-widest font-bold">
+          Agregar Deducible
+        </h4>
+        <button
+          onClick={onClose}
+          aria-label="Cerrar"
+          className="text-on-surface-variant hover:text-on-surface p-xs"
+        >
+          <span className="material-symbols-outlined text-[20px]">close</span>
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-xs">
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="Nombre"
+          disabled={disabled}
+          autoFocus
+          className="flex-1 min-w-[140px] bg-transparent text-on-surface text-body-md px-xs py-xs border border-outline-variant focus:outline-none focus:border-secondary disabled:opacity-50"
+        />
+        <select
+          value={method}
+          onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+          disabled={disabled}
+          className="bg-surface-container text-on-surface text-body-md px-xs py-xs border border-outline-variant focus:outline-none focus:border-secondary disabled:opacity-50"
+        >
+          {PAYMENT_METHODS.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <input
+          type="number"
+          inputMode="decimal"
+          step="0.01"
+          min="0"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="0.00"
+          disabled={disabled}
+          className="w-28 bg-transparent text-data-mono font-data-mono text-on-surface text-right px-xs py-xs border border-outline-variant focus:outline-none focus:border-secondary disabled:opacity-50"
+        />
+        <button
+          onClick={submit}
+          disabled={!canAdd}
+          className="bg-secondary text-on-secondary px-md py-xs font-label-sm font-bold disabled:opacity-50 hover:opacity-90 transition-opacity flex items-center gap-xs"
+        >
+          <span className="material-symbols-outlined text-[18px]">add</span>
+          Agregar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TotalsGrid({
+  methods,
+  grand,
+}: {
+  methods: { method: PaymentMethod; amount: number }[];
+  grand: number;
+}) {
+  return (
+    <ul className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-sm">
+      <li className="bg-secondary text-on-secondary px-sm py-xs flex flex-col gap-xs col-span-2 sm:col-span-4 lg:col-span-1">
+        <span className="text-label-sm uppercase tracking-wider font-bold">Total</span>
+        <span className="text-data-mono font-data-mono text-[16px] font-bold">
+          {formatMoney(grand)}
+        </span>
+      </li>
+      {methods.map((m) => (
+        <li
+          key={m.method}
+          className="bg-surface-container-lowest border border-outline-variant px-sm py-xs flex flex-col gap-xs"
+        >
+          <span className="text-label-sm text-on-surface-variant uppercase tracking-wider">
+            {m.method}
+          </span>
+          <span className="text-data-mono font-data-mono text-on-surface text-[16px]">
+            {formatMoney(m.amount)}
           </span>
         </li>
-        {methods.map((m) => (
-          <li
-            key={m.method}
-            className="bg-surface-container-lowest border border-outline-variant px-sm py-xs flex flex-col gap-xs"
-          >
-            <span className="text-label-sm text-on-surface-variant uppercase tracking-wider">
-              {m.method}
-            </span>
-            <span className="text-data-mono font-data-mono text-on-surface text-[16px]">
-              {formatMoney(m.amount)}
-            </span>
-          </li>
+      ))}
+    </ul>
+  );
+}
+
+function DeducibleRow({
+  deducible,
+  disabled,
+  onUpdate,
+  onRemove,
+}: {
+  deducible: Deducible;
+  disabled: boolean;
+  onUpdate: (patch: Partial<Omit<Deducible, 'id'>>) => void;
+  onRemove: () => void;
+}) {
+  // Local string draft for the amount input so the user can type intermediate
+  // values like "5." without React snapping the controlled value back.
+  const [amountDraft, setAmountDraft] = useState(
+    deducible.amount === 0 ? '' : String(deducible.amount),
+  );
+
+  function handleAmount(s: string) {
+    setAmountDraft(s);
+    const parsed = parseFloat(s);
+    onUpdate({ amount: Number.isFinite(parsed) ? parsed : 0 });
+  }
+
+  return (
+    <li className="flex flex-wrap items-center gap-xs bg-surface-container-lowest border border-outline-variant px-sm py-xs">
+      <input
+        type="text"
+        value={deducible.name}
+        onChange={(e) => onUpdate({ name: e.target.value })}
+        placeholder="Nombre"
+        disabled={disabled}
+        className="flex-1 min-w-[140px] bg-transparent text-on-surface text-body-md px-xs py-xs border border-outline-variant focus:outline-none focus:border-secondary disabled:opacity-50"
+      />
+      <select
+        value={deducible.method}
+        onChange={(e) => onUpdate({ method: e.target.value as PaymentMethod })}
+        disabled={disabled}
+        className="bg-surface-container text-on-surface text-body-md px-xs py-xs border border-outline-variant focus:outline-none focus:border-secondary disabled:opacity-50"
+      >
+        {PAYMENT_METHODS.map((m) => (
+          <option key={m} value={m}>
+            {m}
+          </option>
         ))}
-      </ul>
-    </section>
+      </select>
+      <input
+        type="number"
+        inputMode="decimal"
+        step="0.01"
+        min="0"
+        value={amountDraft}
+        onChange={(e) => handleAmount(e.target.value)}
+        placeholder="0.00"
+        disabled={disabled}
+        className="w-28 bg-transparent text-data-mono font-data-mono text-on-surface text-right px-xs py-xs border border-outline-variant focus:outline-none focus:border-secondary disabled:opacity-50"
+      />
+      <button
+        onClick={onRemove}
+        disabled={disabled}
+        aria-label="Eliminar deducible"
+        className="text-on-surface-variant hover:text-error transition-colors p-xs disabled:opacity-50"
+      >
+        <span className="material-symbols-outlined text-[20px]">close</span>
+      </button>
+    </li>
   );
 }
 

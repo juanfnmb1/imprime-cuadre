@@ -1,8 +1,8 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import JSZip from 'jszip';
-import { formatMoney, sumDaysTotals } from './parser';
-import type { DayTotals, GrandTotalRow, Transaction } from './types';
+import { applyDeducibles, formatMoney, sumDaysTotals } from './parser';
+import type { DayTotals, Deducible, GrandTotalRow, Transaction } from './types';
 
 // Black & white only — no fills, just thin black borders. Saves ink.
 const BW_TABLE_DEFAULTS = {
@@ -127,9 +127,13 @@ export function rangeFolderName(days: DayTotals[]): string {
   return first === last ? `cuadre-${first}` : `cuadre-${first}-a-${last}`;
 }
 
-export function buildCustomSummaryPdf(selectedDays: DayTotals[]): jsPDF {
+export function buildCustomSummaryPdf(
+  selectedDays: DayTotals[],
+  deducibles: Deducible[] = [],
+): jsPDF {
   const sorted = [...selectedDays].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
   const { methods, grand } = sumDaysTotals(sorted);
+  const after = applyDeducibles(methods, grand, deducibles);
 
   const subtitle =
     sorted.length === 0
@@ -141,31 +145,59 @@ export function buildCustomSummaryPdf(selectedDays: DayTotals[]): jsPDF {
   const doc = newDoc();
   header(doc, 'Resumen del Cuadre', subtitle);
 
+  const boldFootStyles = {
+    fillColor: false as const,
+    textColor: 0,
+    fontStyle: 'bold' as const,
+    lineColor: 0,
+    lineWidth: 0.5,
+  };
+
   autoTable(doc, {
     ...BW_TABLE_DEFAULTS,
     startY: 90,
     head: [['Método', 'Monto']],
     body: methods.map((m) => [m.method, formatMoney(m.amount)]),
     foot: [['Total General', formatMoney(grand)]],
-    footStyles: {
-      fillColor: false,
-      textColor: 0,
-      fontStyle: 'bold',
-      lineColor: 0,
-      lineWidth: 0.5,
-    },
+    footStyles: boldFootStyles,
     columnStyles: { 1: { halign: 'right' } },
     margin: { left: 40, right: 40 },
     tableWidth: 280,
     styles: { ...BW_TABLE_DEFAULTS.styles, fontSize: 11, cellPadding: 6 },
   });
 
-  if (sorted.length > 0) {
-    const afterY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+  const lastY = () =>
+    (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+
+  if (deducibles.length > 0) {
+    autoTable(doc, {
+      ...BW_TABLE_DEFAULTS,
+      startY: lastY() + 24,
+      head: [['Deducible', 'Método', 'Monto']],
+      body: deducibles.map((d) => [d.name || '(sin nombre)', d.method, formatMoney(d.amount)]),
+      columnStyles: { 2: { halign: 'right', cellWidth: 80 } },
+      margin: { left: 40, right: 40 },
+      styles: { ...BW_TABLE_DEFAULTS.styles, fontSize: 10, cellPadding: 5 },
+    });
 
     autoTable(doc, {
       ...BW_TABLE_DEFAULTS,
-      startY: afterY + 24,
+      startY: lastY() + 24,
+      head: [['Total Después de Deducibles', 'Monto']],
+      body: after.methods.map((m) => [m.method, formatMoney(m.amount)]),
+      foot: [['Total General', formatMoney(after.grand)]],
+      footStyles: boldFootStyles,
+      columnStyles: { 1: { halign: 'right' } },
+      margin: { left: 40, right: 40 },
+      tableWidth: 280,
+      styles: { ...BW_TABLE_DEFAULTS.styles, fontSize: 11, cellPadding: 6 },
+    });
+  }
+
+  if (sorted.length > 0) {
+    autoTable(doc, {
+      ...BW_TABLE_DEFAULTS,
+      startY: lastY() + 24,
       head: [['Día', 'Total Diario']],
       body: sorted.map((d) => [d.rawDate, formatMoney(d.totalDiario)]),
       columnStyles: { 1: { halign: 'right' } },
@@ -191,6 +223,7 @@ function summaryFilename(sortedDays: DayTotals[]): string {
 export async function downloadSelectionZip(
   selectedDays: DayTotals[],
   transactionsByDay: Record<string, Transaction[]>,
+  deducibles: Deducible[] = [],
 ): Promise<{ folderName: string; count: number }> {
   const sorted = [...selectedDays].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
   const folderName = rangeFolderName(sorted);
@@ -199,7 +232,7 @@ export async function downloadSelectionZip(
   const folder = zip.folder(folderName);
   if (!folder) throw new Error('No se pudo crear la carpeta dentro del zip.');
 
-  folder.file(summaryFilename(sorted), buildCustomSummaryPdf(sorted).output('blob'));
+  folder.file(summaryFilename(sorted), buildCustomSummaryPdf(sorted, deducibles).output('blob'));
   for (const day of sorted) {
     const txs = transactionsByDay[day.dateKey] ?? [];
     folder.file(dayFilename(day), buildDayPdf(day, txs).output('blob'));

@@ -32,3 +32,10 @@ export type ParsedWorkbook = {
 };
 
 export type PaymentMethod = 'Zelle' | 'Cash' | 'Clover' | 'Venmo' | 'Paypal' | 'Cash App';
+
+export type Deducible = {
+  id: string;
+  name: string;
+  method: PaymentMethod;
+  amount: number;
+};
