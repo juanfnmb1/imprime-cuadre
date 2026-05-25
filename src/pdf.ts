@@ -218,6 +218,17 @@ function summaryFilename(sortedDays: DayTotals[]): string {
     : `Resumen Cuadre ${first} a ${last}.pdf`;
 }
 
+// Downloads just the summary PDF for the user-selected days (no zip, no per-day PDFs).
+export function downloadSelectionSummary(
+  selectedDays: DayTotals[],
+  deducibles: Deducible[] = [],
+): { filename: string } {
+  const sorted = [...selectedDays].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  const filename = summaryFilename(sorted);
+  buildCustomSummaryPdf(sorted, deducibles).save(filename);
+  return { filename };
+}
+
 // Bundles the user-selected days into a zip with a custom summary PDF + each
 // selected day's full PDF. Folder name uses the same range pattern.
 export async function downloadSelectionZip(

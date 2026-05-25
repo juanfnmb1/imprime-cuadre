@@ -1,10 +1,11 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { applyDeducibles, formatMoney, parseWorkbook, PAYMENT_METHODS, sumDaysTotals } from './parser';
 import {
   buildDayPdf,
   buildGrandTotalPdf,
   dayFilename,
   downloadAllPdfs,
+  downloadSelectionSummary,
   downloadSelectionZip,
 } from './pdf';
 import type {
@@ -265,11 +266,20 @@ function Preview({ data }: { data: ParsedWorkbook }) {
       setDownloadStatus(
         `Descargado: ${result.folderName}.zip (${result.count} PDFs adentro, incluyendo el resumen).`,
       );
-      exitSelection();
     } catch (e) {
       setDownloadStatus(e instanceof Error ? `Error: ${e.message}` : 'Error al generar el zip.');
     } finally {
       setSelectionDownloading(false);
+    }
+  }
+
+  function printSummaryOnly() {
+    if (selectedDays.length === 0) return;
+    try {
+      const result = downloadSelectionSummary(selectedDays, deducibles);
+      setDownloadStatus(`Descargado: ${result.filename}`);
+    } catch (e) {
+      setDownloadStatus(e instanceof Error ? `Error: ${e.message}` : 'Error al generar el resumen.');
     }
   }
 
@@ -305,7 +315,9 @@ function Preview({ data }: { data: ParsedWorkbook }) {
         <span className="material-symbols-outlined text-[22px]">folder_zip</span>
         {downloadingAll
           ? 'Descargando...'
-          : `Descargar Todos los PDFs (${days.length + 1})`}
+          : `Descargar Todos los PDFs (${days.length} ${
+              days.length === 1 ? 'día' : 'días'
+            } + 1 resumen)`}
       </button>
 
       {downloadStatus && (
@@ -366,6 +378,7 @@ function Preview({ data }: { data: ParsedWorkbook }) {
             onRemoveDeducible={removeDeducible}
             onToggleAll={toggleAll}
             onPrint={printSelection}
+            onPrintSummaryOnly={printSummaryOnly}
             onCancel={exitSelection}
           />
         )}
@@ -398,6 +411,7 @@ function SelectionPanel({
   onRemoveDeducible,
   onToggleAll,
   onPrint,
+  onPrintSummaryOnly,
   onCancel,
 }: {
   selectedDays: DayTotals[];
@@ -410,6 +424,7 @@ function SelectionPanel({
   onRemoveDeducible: (id: string) => void;
   onToggleAll: () => void;
   onPrint: () => void;
+  onPrintSummaryOnly: () => void;
   onCancel: () => void;
 }) {
   const { methods, grand } = useMemo(() => sumDaysTotals(selectedDays), [selectedDays]);
@@ -419,9 +434,36 @@ function SelectionPanel({
   );
   const hasDeducibles = deducibles.length > 0;
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [menuOpen]);
+
+  function handleCancelClick() {
+    if (hasDeducibles) {
+      setShowCancelConfirm(true);
+    } else {
+      onCancel();
+    }
+  }
+
+  function confirmCancel() {
+    setShowCancelConfirm(false);
+    onCancel();
+  }
 
   return (
-    <section className="bg-surface-container border-2 border-secondary p-md space-y-md sticky top-2 z-10 shadow-lg">
+    <section className="bg-surface-container border-2 border-secondary p-md space-y-md shadow-lg">
       <div className="flex items-start justify-between flex-wrap gap-sm border-b border-outline-variant pb-base">
         <div>
           <h3 className="text-h2 font-h2 text-on-surface">Modificar Cuadre</h3>
@@ -442,13 +484,13 @@ function SelectionPanel({
             </button>
           </div>
         </div>
-        <div className="flex gap-sm flex-wrap">
+        <div className="flex gap-sm flex-wrap ml-auto justify-end">
           <button
-            onClick={onCancel}
+            onClick={handleCancelClick}
             disabled={downloading}
             className="border border-outline-variant text-on-surface px-md py-xs font-label-sm font-bold hover:bg-surface-container-high transition-colors disabled:opacity-50"
           >
-            Cancelar
+            Cancelar / Regresar
           </button>
           <button
             onClick={() => setShowAddForm(true)}
@@ -458,14 +500,47 @@ function SelectionPanel({
             <span className="material-symbols-outlined text-[18px]">add</span>
             Deducible
           </button>
-          <button
-            onClick={onPrint}
-            disabled={selectedDays.length === 0 || downloading}
-            className="bg-secondary text-on-secondary px-md py-xs font-label-sm font-bold disabled:opacity-50 flex items-center gap-xs hover:opacity-90 transition-opacity"
-          >
-            <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
-            {downloading ? 'Descargando...' : 'Descargar Resumen'}
-          </button>
+          <div ref={menuRef} className="relative flex">
+            <button
+              onClick={onPrint}
+              disabled={selectedDays.length === 0 || downloading}
+              className="bg-secondary text-on-secondary px-md py-xs font-label-sm font-bold disabled:opacity-50 flex items-center gap-xs hover:opacity-90 transition-opacity"
+            >
+              <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
+              {downloading ? 'Descargando...' : 'Descargar Cuadre'}
+            </button>
+            <button
+              onClick={() => setMenuOpen((v) => !v)}
+              disabled={selectedDays.length === 0 || downloading}
+              aria-label="Más opciones de descarga"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              className="bg-secondary text-on-secondary px-xs py-xs font-label-sm font-bold disabled:opacity-50 hover:opacity-90 transition-opacity border-l border-on-secondary/20"
+            >
+              <span className="material-symbols-outlined text-[18px]">more_vert</span>
+            </button>
+            {menuOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 top-full mt-xs bg-surface-container border border-outline-variant shadow-lg z-20 min-w-[220px]"
+              >
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onPrintSummaryOnly();
+                  }}
+                  disabled={selectedDays.length === 0 || downloading}
+                  className="w-full text-left px-md py-sm text-body-md text-on-surface hover:bg-surface-container-high disabled:opacity-50 flex items-center gap-sm"
+                >
+                  <span className="material-symbols-outlined text-[18px] text-secondary">
+                    description
+                  </span>
+                  Descargar solo resumen
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -506,7 +581,67 @@ function SelectionPanel({
           <TotalsGrid methods={after.methods} grand={after.grand} />
         </div>
       )}
+
+      {showCancelConfirm && (
+        <ConfirmDialog
+          title="¿Cerrar Modificar Cuadre?"
+          message={`Vas a perder ${deducibles.length} ${
+            deducibles.length === 1 ? 'deducible' : 'deducibles'
+          } que agregaste.`}
+          confirmLabel="Sí, cerrar"
+          cancelLabel="No, volver"
+          onConfirm={confirmCancel}
+          onCancel={() => setShowCancelConfirm(false)}
+        />
+      )}
     </section>
+  );
+}
+
+function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  cancelLabel,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-md"
+      onClick={onCancel}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="bg-surface-container border-2 border-secondary p-lg max-w-md w-full space-y-md shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-h2 font-h2 text-on-surface">{title}</h3>
+        <p className="text-body-md text-on-surface-variant">{message}</p>
+        <div className="flex gap-sm justify-end flex-wrap">
+          <button
+            onClick={onCancel}
+            className="border border-outline-variant text-on-surface px-md py-xs font-label-sm font-bold hover:bg-surface-container-high transition-colors"
+          >
+            {cancelLabel}
+          </button>
+          <button
+            onClick={onConfirm}
+            className="bg-error text-on-error px-md py-xs font-label-sm font-bold hover:opacity-90 transition-opacity"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -520,7 +655,7 @@ function AddDeducibleForm({
   onClose: () => void;
 }) {
   const [name, setName] = useState('');
-  const [method, setMethod] = useState<PaymentMethod>('Cash');
+  const [method, setMethod] = useState<PaymentMethod>('Zelle');
   const [amount, setAmount] = useState('');
 
   const parsed = parseFloat(amount);
@@ -761,7 +896,7 @@ function GrandTotalCard({
           className="bg-secondary text-on-secondary px-md py-xs font-label-sm font-bold active:scale-95 transition-all flex items-center gap-xs"
         >
           <span className="material-symbols-outlined text-[18px]">download</span>
-          Descargar PDF
+          Descargar Total General
         </button>
       </div>
 
