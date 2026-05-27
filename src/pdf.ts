@@ -229,6 +229,66 @@ export function downloadSelectionSummary(
   return { filename };
 }
 
+function deduciblesFilename(sortedDays: DayTotals[]): string {
+  if (sortedDays.length === 0) return 'Deducibles Cuadre.pdf';
+  const first = shortMonthDay(sortedDays[0].rawDate);
+  const last = shortMonthDay(sortedDays[sortedDays.length - 1].rawDate);
+  return first === last
+    ? `Deducibles Cuadre ${first}.pdf`
+    : `Deducibles Cuadre ${first} a ${last}.pdf`;
+}
+
+export function buildDeduciblesPdf(
+  selectedDays: DayTotals[],
+  deducibles: Deducible[],
+): jsPDF {
+  const sorted = [...selectedDays].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  const subtitle =
+    sorted.length === 0
+      ? 'Sin días seleccionados'
+      : sorted.length === 1
+        ? `Día: ${sorted[0].rawDate}`
+        : `Periodo: ${sorted[0].rawDate} a ${sorted[sorted.length - 1].rawDate} · ${sorted.length} días`;
+
+  const doc = newDoc();
+  header(doc, 'Deducibles', subtitle);
+
+  const total = deducibles.reduce((acc, d) => acc + (Number.isFinite(d.amount) ? d.amount : 0), 0);
+  const boldFootStyles = {
+    fillColor: false as const,
+    textColor: 0,
+    fontStyle: 'bold' as const,
+    lineColor: 0,
+    lineWidth: 0.5,
+  };
+
+  autoTable(doc, {
+    ...BW_TABLE_DEFAULTS,
+    startY: 90,
+    head: [['Deducible', 'Método', 'Monto']],
+    body: deducibles.length
+      ? deducibles.map((d) => [d.name || '(sin nombre)', d.method, formatMoney(d.amount)])
+      : [[{ content: 'Sin deducibles.', colSpan: 3, styles: { halign: 'center' } }]],
+    foot: deducibles.length ? [['Total', '', formatMoney(total)]] : undefined,
+    footStyles: boldFootStyles,
+    columnStyles: { 2: { halign: 'right', cellWidth: 80 } },
+    margin: { left: 40, right: 40 },
+    styles: { ...BW_TABLE_DEFAULTS.styles, fontSize: 11, cellPadding: 6 },
+  });
+
+  return doc;
+}
+
+export function downloadDeducibles(
+  selectedDays: DayTotals[],
+  deducibles: Deducible[],
+): { filename: string } {
+  const sorted = [...selectedDays].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  const filename = deduciblesFilename(sorted);
+  buildDeduciblesPdf(sorted, deducibles).save(filename);
+  return { filename };
+}
+
 // Bundles the user-selected days into a zip with a custom summary PDF + each
 // selected day's full PDF. Folder name uses the same range pattern.
 export async function downloadSelectionZip(

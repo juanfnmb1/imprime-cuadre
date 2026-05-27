@@ -5,6 +5,7 @@ import {
   buildGrandTotalPdf,
   dayFilename,
   downloadAllPdfs,
+  downloadDeducibles,
   downloadSelectionSummary,
   downloadSelectionZip,
 } from './pdf';
@@ -283,6 +284,18 @@ function Preview({ data }: { data: ParsedWorkbook }) {
     }
   }
 
+  function printDeduciblesOnly() {
+    if (deducibles.length === 0) return;
+    try {
+      const result = downloadDeducibles(selectedDays, deducibles);
+      setDownloadStatus(`Descargado: ${result.filename}`);
+    } catch (e) {
+      setDownloadStatus(
+        e instanceof Error ? `Error: ${e.message}` : 'Error al generar los deducibles.',
+      );
+    }
+  }
+
   async function downloadAll() {
     setDownloadingAll(true);
     setDownloadStatus('');
@@ -379,6 +392,7 @@ function Preview({ data }: { data: ParsedWorkbook }) {
             onToggleAll={toggleAll}
             onPrint={printSelection}
             onPrintSummaryOnly={printSummaryOnly}
+            onPrintDeduciblesOnly={printDeduciblesOnly}
             onCancel={exitSelection}
           />
         )}
@@ -412,6 +426,7 @@ function SelectionPanel({
   onToggleAll,
   onPrint,
   onPrintSummaryOnly,
+  onPrintDeduciblesOnly,
   onCancel,
 }: {
   selectedDays: DayTotals[];
@@ -425,6 +440,7 @@ function SelectionPanel({
   onToggleAll: () => void;
   onPrint: () => void;
   onPrintSummaryOnly: () => void;
+  onPrintDeduciblesOnly: () => void;
   onCancel: () => void;
 }) {
   const { methods, grand } = useMemo(() => sumDaysTotals(selectedDays), [selectedDays]);
@@ -437,6 +453,8 @@ function SelectionPanel({
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [deducibleMenuOpen, setDeducibleMenuOpen] = useState(false);
+  const deducibleMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -448,6 +466,17 @@ function SelectionPanel({
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!deducibleMenuOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (deducibleMenuRef.current && !deducibleMenuRef.current.contains(e.target as Node)) {
+        setDeducibleMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [deducibleMenuOpen]);
 
   function handleCancelClick() {
     if (hasDeducibles) {
@@ -556,9 +585,49 @@ function SelectionPanel({
 
       {hasDeducibles && (
         <div className="space-y-sm border-t border-outline-variant pt-md">
-          <h4 className="text-label-sm text-on-surface-variant uppercase tracking-widest font-bold">
-            Deducibles
-          </h4>
+          <div className="flex items-center justify-between gap-sm">
+            <h4 className="text-label-sm text-on-surface-variant uppercase tracking-widest font-bold">
+              Deducibles
+            </h4>
+            <div ref={deducibleMenuRef} className="relative">
+              <button
+                onClick={() => setDeducibleMenuOpen((v) => !v)}
+                disabled={selectedDays.length === 0 || downloading}
+                aria-label="Más opciones de deducibles"
+                aria-haspopup="menu"
+                aria-expanded={deducibleMenuOpen}
+                title={
+                  selectedDays.length === 0
+                    ? 'Selecciona al menos un día para descargar'
+                    : undefined
+                }
+                className="text-on-surface-variant hover:text-on-surface transition-colors p-xs disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-on-surface-variant"
+              >
+                <span className="material-symbols-outlined text-[20px]">more_vert</span>
+              </button>
+              {deducibleMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full mt-xs bg-surface-container border border-outline-variant shadow-lg z-20 min-w-[220px]"
+                >
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setDeducibleMenuOpen(false);
+                      onPrintDeduciblesOnly();
+                    }}
+                    disabled={selectedDays.length === 0 || downloading}
+                    className="w-full text-left px-md py-sm text-body-md text-on-surface hover:bg-surface-container-high disabled:opacity-50 flex items-center gap-sm"
+                  >
+                    <span className="material-symbols-outlined text-[18px] text-secondary">
+                      download
+                    </span>
+                    Descargar Deducibles
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
           <ul className="space-y-xs">
             {deducibles.map((d) => (
               <DeducibleRow
